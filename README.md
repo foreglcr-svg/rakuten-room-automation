@@ -29,7 +29,7 @@
    | Secret | 必須 | 内容 |
    |---|---|---|
    | `RAKUTEN_APP_ID` | ✅ | 楽天アプリID |
-   | `OPENAI_API_KEY` | ✅ | OpenAI APIキー(紹介文生成用) |
+   | `GEMINI_API_KEY` | ✅ | Gemini APIキー(紹介文生成用、[Google AI Studio](https://aistudio.google.com/apikey)で無料発行) |
    | `RAKUTEN_AFFILIATE_ID` | 任意 | 楽天アフィリエイトID(カタログ内リンクも成果対象になる) |
    | `DISCORD_WEBHOOK_URL` | 任意 | カタログ完成をDiscordに通知 |
 
@@ -58,7 +58,7 @@
 
 ```bash
 pip install -r requirements.txt
-export RAKUTEN_APP_ID=xxxx OPENAI_API_KEY=sk-xxxx
+export RAKUTEN_APP_ID=xxxx GEMINI_API_KEY=AIzaxxxx
 python app.py
 # → CATALOG.md が生成される
 ```
