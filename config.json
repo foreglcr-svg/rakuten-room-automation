@@ -1,0 +1,19 @@
+{
+  "keywords": [
+    "ヴィンテージ 古着 メンズ",
+    "古着 レディース 韓国",
+    "レザーケア クリーム",
+    "衣類スチーマー",
+    "毛玉取り 電動",
+    "防虫剤 クローゼット",
+    "スニーカー クリーナー",
+    "古着 リメイク 雑貨"
+  ],
+  "keywords_per_day": 3,
+  "items_per_day": 5,
+  "min_price": 1000,
+  "max_price": 15000,
+  "min_review_count": 5,
+  "min_review_average": 4.0,
+  "hashtags_base": ["#楽天room", "#楽天購入品", "#お買い物マラソン"]
+}
