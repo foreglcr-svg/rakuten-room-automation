@@ -211,22 +211,27 @@ def generate_caption(data, config):
 
 紹介文の本文だけを出力してください。"""
 
-    try:
-        res = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
-            headers={"x-goog-api-key": GEMINI_API_KEY},
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=60,
-        )
-        res.raise_for_status()
-        caption = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        if not caption:
+    caption = None
+    for attempt in range(3):  # 無料枠のレートリミットに当たっても再試行で拾う
+        try:
+            res = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
+                headers={"x-goog-api-key": GEMINI_API_KEY},
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                timeout=60,
+            )
+            res.raise_for_status()
+            caption = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            if caption:
+                break
             raise ValueError("empty caption")
-    except Exception as e:
-        print(f"  [warn] AI生成失敗、テンプレ文を使用: {e}")
+        except Exception as e:
+            print(f"  [warn] AI生成失敗(試行{attempt + 1}/3): {e}")
+            time.sleep(20 * (attempt + 1))
+    if not caption:
+        print("  [warn] テンプレ文を使用します")
         caption = fallback_caption(data, config)
-    finally:
-        time.sleep(5)  # Gemini無料枠のレートリミット(10req/分)を厳守
+    time.sleep(8)  # Gemini無料枠のレートリミット(10req/分)を厳守
 
     # 楽天ROOMの文字数上限を絶対に超えないための物理リミッター
     if len(caption) > 480:
