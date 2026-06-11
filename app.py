@@ -23,8 +23,15 @@ def _env(name):
     return (os.environ.get(name) or "").strip().strip('"').strip("'") or None
 
 
-RAKUTEN_APP_ID = _env("RAKUTEN_APP_ID")
+RAKUTEN_APP_ID = _env("RAKUTEN_APP_ID")  # 新形式: ハイフン区切りのUUID
+RAKUTEN_ACCESS_KEY = _env("RAKUTEN_ACCESS_KEY")  # 新APIで必須: pk_ で始まるキー
 RAKUTEN_AFFILIATE_ID = _env("RAKUTEN_AFFILIATE_ID")  # 任意(あると外部リンクも成果対象)
+# 新APIはアプリ登録時のURLとOrigin/Refererの一致を検証する
+RAKUTEN_APP_URL = _env("RAKUTEN_APP_URL") or (
+    f"https://github.com/{os.environ.get('GITHUB_REPOSITORY')}"
+    if os.environ.get("GITHUB_REPOSITORY")
+    else "https://example.com"
+)
 GEMINI_API_KEY = _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")
 GEMINI_MODEL = _env("GEMINI_MODEL") or "gemini-2.5-flash"
 DISCORD_WEBHOOK_URL = _env("DISCORD_WEBHOOK_URL")  # 任意(カタログ更新通知)
@@ -33,7 +40,8 @@ CONFIG_PATH = "config.json"
 HISTORY_PATH = "posted_items.json"
 CATALOG_PATH = "CATALOG.md"
 
-ICHIBA_SEARCH_URL = "https://app.rakuten.co.jp/services/api/IchibaItem/Search/20220601"
+# 2026年の楽天APIインフラ刷新後の新エンドポイント(旧app.rakuten.co.jpは廃止済み)
+ICHIBA_SEARCH_URL = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20220601"
 
 
 def load_config():
@@ -66,9 +74,20 @@ def todays_keywords(config):
     return [keywords[(start + i) % len(keywords)] for i in range(n)]
 
 
+def _api_headers():
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(RAKUTEN_APP_URL)
+    return {
+        "Origin": f"{parts.scheme}://{parts.netloc}",
+        "Referer": RAKUTEN_APP_URL,
+    }
+
+
 def search_items(keyword, sort, use_affiliate=True):
     params = {
         "applicationId": RAKUTEN_APP_ID,
+        "accessKey": RAKUTEN_ACCESS_KEY,
         "keyword": keyword,
         "hits": 30,
         "sort": sort,
@@ -77,18 +96,19 @@ def search_items(keyword, sort, use_affiliate=True):
     if RAKUTEN_AFFILIATE_ID and use_affiliate:
         params["affiliateId"] = RAKUTEN_AFFILIATE_ID
     try:
-        res = requests.get(ICHIBA_SEARCH_URL, params=params, timeout=30)
-        if res.status_code == 400:
+        res = requests.get(ICHIBA_SEARCH_URL, params=params, headers=_api_headers(), timeout=30)
+        if res.status_code in (400, 401, 403):
             try:
-                detail = res.json().get("error_description", "")
+                body = res.json()
+                detail = body.get("error_description") or body.get("error") or str(body)[:200]
             except ValueError:
-                detail = ""
-            if use_affiliate and RAKUTEN_AFFILIATE_ID:
+                detail = res.text[:200]
+            if res.status_code == 400 and use_affiliate and RAKUTEN_AFFILIATE_ID:
                 # affiliateIdの形式不正でも全体が止まらないよう、IDなしで再試行
                 print(f"  [warn] 楽天API 400 ({detail}) — affiliateIdを外して再試行します")
                 time.sleep(1)
                 return search_items(keyword, sort, use_affiliate=False)
-            print(f"  [warn] 楽天API 400 keyword={keyword!r}: {detail}")
+            print(f"  [warn] 楽天API {res.status_code} keyword={keyword!r}: {detail}")
             return []
         res.raise_for_status()
         return res.json().get("Items", [])
@@ -272,17 +292,16 @@ def notify_discord(count):
 
 
 def main():
-    if not RAKUTEN_APP_ID or not GEMINI_API_KEY:
-        print("Error: RAKUTEN_APP_ID と GEMINI_API_KEY を環境変数に設定してください。")
+    if not RAKUTEN_APP_ID or not RAKUTEN_ACCESS_KEY or not GEMINI_API_KEY:
+        print("Error: RAKUTEN_APP_ID / RAKUTEN_ACCESS_KEY / GEMINI_API_KEY を環境変数に設定してください。")
         sys.exit(1)
 
     # 値そのものは出さず、形式だけを診断ログに出す(Secret登録ミスの切り分け用)
-    digits = "数字のみ" if RAKUTEN_APP_ID.isdigit() else "数字以外の文字を含む"
-    print(f"[check] RAKUTEN_APP_ID: {len(RAKUTEN_APP_ID)}文字・{digits}(正しくは20桁の数字)")
-    if not (RAKUTEN_APP_ID.isdigit() and len(RAKUTEN_APP_ID) == 20):
-        print("[check] → 形式が一致しません。https://webservice.rakuten.co.jp/app/list の「アプリID/デベロッパーID」を確認してください。")
+    print(f"[check] RAKUTEN_APP_ID: {len(RAKUTEN_APP_ID)}文字・ハイフン{RAKUTEN_APP_ID.count('-')}個(新形式はハイフン4個のUUID)")
+    print(f"[check] RAKUTEN_ACCESS_KEY: pk_開始={'はい' if RAKUTEN_ACCESS_KEY.startswith('pk_') else 'いいえ(正しくはpk_で始まる)'}")
     if RAKUTEN_AFFILIATE_ID:
         print(f"[check] RAKUTEN_AFFILIATE_ID: {len(RAKUTEN_AFFILIATE_ID)}文字・ピリオド{RAKUTEN_AFFILIATE_ID.count('.')}個(正しくはピリオド3個)")
+    print(f"[check] Origin/Referer: {RAKUTEN_APP_URL}(楽天のアプリ登録URLと一致している必要あり)")
     if not RAKUTEN_AFFILIATE_ID:
         print("[warn] RAKUTEN_AFFILIATE_ID 未設定。カタログ内リンクは成果対象外になります(ROOM投稿分の報酬には影響なし)。")
 

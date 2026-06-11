@@ -28,9 +28,11 @@
 
    | Secret | 必須 | 内容 |
    |---|---|---|
-   | `RAKUTEN_APP_ID` | ✅ | 楽天アプリID |
+   | `RAKUTEN_APP_ID` | ✅ | アプリケーションID(2026年新形式: ハイフン区切りのUUID) |
+   | `RAKUTEN_ACCESS_KEY` | ✅ | アクセスキー(`pk_` で始まる。2026年の新APIで必須) |
    | `GEMINI_API_KEY` | ✅ | Gemini APIキー(紹介文生成用、[Google AI Studio](https://aistudio.google.com/apikey)で無料発行) |
    | `RAKUTEN_AFFILIATE_ID` | 任意 | 楽天アフィリエイトID(カタログ内リンクも成果対象になる) |
+   | `RAKUTEN_APP_URL` | 任意 | 楽天にアプリ登録した際のURL(未設定時はこのリポジトリのURL)。Origin/Referer検証に使用 |
    | `DISCORD_WEBHOOK_URL` | 任意 | カタログ完成をDiscordに通知 |
 
 3. **main ブランチにマージ**すると毎朝7時(JST)に自動実行されます。
