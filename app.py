@@ -18,11 +18,16 @@ import requests
 
 JST = timezone(timedelta(hours=9))
 
-RAKUTEN_APP_ID = os.environ.get("RAKUTEN_APP_ID")
-RAKUTEN_AFFILIATE_ID = os.environ.get("RAKUTEN_AFFILIATE_ID")  # 任意(あると外部リンクも成果対象)
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")  # 任意(カタログ更新通知)
+def _env(name):
+    # コピペ時に混入しがちな空白・改行・引用符はAPIエラーの原因になるため除去
+    return (os.environ.get(name) or "").strip().strip('"').strip("'") or None
+
+
+RAKUTEN_APP_ID = _env("RAKUTEN_APP_ID")
+RAKUTEN_AFFILIATE_ID = _env("RAKUTEN_AFFILIATE_ID")  # 任意(あると外部リンクも成果対象)
+GEMINI_API_KEY = _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")
+GEMINI_MODEL = _env("GEMINI_MODEL") or "gemini-2.5-flash"
+DISCORD_WEBHOOK_URL = _env("DISCORD_WEBHOOK_URL")  # 任意(カタログ更新通知)
 
 CONFIG_PATH = "config.json"
 HISTORY_PATH = "posted_items.json"
@@ -270,6 +275,14 @@ def main():
     if not RAKUTEN_APP_ID or not GEMINI_API_KEY:
         print("Error: RAKUTEN_APP_ID と GEMINI_API_KEY を環境変数に設定してください。")
         sys.exit(1)
+
+    # 値そのものは出さず、形式だけを診断ログに出す(Secret登録ミスの切り分け用)
+    digits = "数字のみ" if RAKUTEN_APP_ID.isdigit() else "数字以外の文字を含む"
+    print(f"[check] RAKUTEN_APP_ID: {len(RAKUTEN_APP_ID)}文字・{digits}(正しくは20桁の数字)")
+    if not (RAKUTEN_APP_ID.isdigit() and len(RAKUTEN_APP_ID) == 20):
+        print("[check] → 形式が一致しません。https://webservice.rakuten.co.jp/app/list の「アプリID/デベロッパーID」を確認してください。")
+    if RAKUTEN_AFFILIATE_ID:
+        print(f"[check] RAKUTEN_AFFILIATE_ID: {len(RAKUTEN_AFFILIATE_ID)}文字・ピリオド{RAKUTEN_AFFILIATE_ID.count('.')}個(正しくはピリオド3個)")
     if not RAKUTEN_AFFILIATE_ID:
         print("[warn] RAKUTEN_AFFILIATE_ID 未設定。カタログ内リンクは成果対象外になります(ROOM投稿分の報酬には影響なし)。")
 
