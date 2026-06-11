@@ -15,13 +15,13 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import requests
-from openai import OpenAI
 
 JST = timezone(timedelta(hours=9))
 
 RAKUTEN_APP_ID = os.environ.get("RAKUTEN_APP_ID")
 RAKUTEN_AFFILIATE_ID = os.environ.get("RAKUTEN_AFFILIATE_ID")  # 任意(あると外部リンクも成果対象)
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")  # 任意(カタログ更新通知)
 
 CONFIG_PATH = "config.json"
@@ -152,7 +152,7 @@ def fallback_caption(data, config):
     )
 
 
-def generate_caption(client, data, config):
+def generate_caption(data, config):
     """購買心理(社会的証明・ベネフィット・行動喚起)を組み込んだ紹介文をAIで生成"""
     month = datetime.now(JST).month
     prompt = f"""あなたは楽天ROOMで月間売上トップクラスの人気インフルエンサーです。
@@ -175,17 +175,21 @@ def generate_caption(client, data, config):
 紹介文の本文だけを出力してください。"""
 
     try:
-        completion = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
+        res = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
+            headers={"x-goog-api-key": GEMINI_API_KEY},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
             timeout=60,
         )
-        caption = (completion.choices[0].message.content or "").strip()
+        res.raise_for_status()
+        caption = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         if not caption:
             raise ValueError("empty caption")
     except Exception as e:
         print(f"  [warn] AI生成失敗、テンプレ文を使用: {e}")
         caption = fallback_caption(data, config)
+    finally:
+        time.sleep(5)  # Gemini無料枠のレートリミット(10req/分)を厳守
 
     # 楽天ROOMの文字数上限を絶対に超えないための物理リミッター
     if len(caption) > 480:
@@ -251,8 +255,8 @@ def notify_discord(count):
 
 
 def main():
-    if not RAKUTEN_APP_ID or not OPENAI_API_KEY:
-        print("Error: RAKUTEN_APP_ID と OPENAI_API_KEY を環境変数に設定してください。")
+    if not RAKUTEN_APP_ID or not GEMINI_API_KEY:
+        print("Error: RAKUTEN_APP_ID と GEMINI_API_KEY を環境変数に設定してください。")
         sys.exit(1)
     if not RAKUTEN_AFFILIATE_ID:
         print("[warn] RAKUTEN_AFFILIATE_ID 未設定。カタログ内リンクは成果対象外になります(ROOM投稿分の報酬には影響なし)。")
@@ -267,11 +271,10 @@ def main():
         print("条件を満たす新規商品が見つかりませんでした。config.jsonのキーワードや条件を見直してください。")
         sys.exit(0)
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
     entries = []
     for score, data in selected:
         print(f"紹介文生成中 (score={score:.0f}): {data['itemName'][:30]}...")
-        caption = generate_caption(client, data, config)
+        caption = generate_caption(data, config)
         entries.append((score, data, caption))
 
     build_catalog(entries)
