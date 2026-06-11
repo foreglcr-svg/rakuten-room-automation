@@ -61,7 +61,7 @@ def todays_keywords(config):
     return [keywords[(start + i) % len(keywords)] for i in range(n)]
 
 
-def search_items(keyword, sort):
+def search_items(keyword, sort, use_affiliate=True):
     params = {
         "applicationId": RAKUTEN_APP_ID,
         "keyword": keyword,
@@ -69,10 +69,22 @@ def search_items(keyword, sort):
         "sort": sort,
         "format": "json",
     }
-    if RAKUTEN_AFFILIATE_ID:
+    if RAKUTEN_AFFILIATE_ID and use_affiliate:
         params["affiliateId"] = RAKUTEN_AFFILIATE_ID
     try:
         res = requests.get(ICHIBA_SEARCH_URL, params=params, timeout=30)
+        if res.status_code == 400:
+            try:
+                detail = res.json().get("error_description", "")
+            except ValueError:
+                detail = ""
+            if use_affiliate and RAKUTEN_AFFILIATE_ID:
+                # affiliateIdの形式不正でも全体が止まらないよう、IDなしで再試行
+                print(f"  [warn] 楽天API 400 ({detail}) — affiliateIdを外して再試行します")
+                time.sleep(1)
+                return search_items(keyword, sort, use_affiliate=False)
+            print(f"  [warn] 楽天API 400 keyword={keyword!r}: {detail}")
+            return []
         res.raise_for_status()
         return res.json().get("Items", [])
     except requests.RequestException as e:
@@ -269,7 +281,7 @@ def main():
     selected = select_items(candidates, config, history)
     if not selected:
         print("条件を満たす新規商品が見つかりませんでした。config.jsonのキーワードや条件を見直してください。")
-        sys.exit(0)
+        sys.exit(1)  # 気づけるようにrunを失敗扱いにする
 
     entries = []
     for score, data in selected:
