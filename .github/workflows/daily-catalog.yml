@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: daily-catalog
@@ -48,3 +49,26 @@ jobs:
             git commit -m "Update ROOM catalog ($(TZ=Asia/Tokyo date +%Y-%m-%d))"
             git push
           fi
+
+      # Issueを作成すると@メンション通知メールが届く(本文に紹介文入りカタログを丸ごと掲載)
+      - name: Email notification via issue
+        if: hashFiles('CATALOG.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 前日までのカタログIssueは自動クローズして受信箱を汚さない
+          gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "in:title ROOMカタログ" --json number --jq '.[].number' \
+            | xargs -r -I{} gh issue close {} --repo "$GITHUB_REPOSITORY" || true
+
+          {
+            echo "@${GITHUB_REPOSITORY_OWNER} 今日のカタログが完成しました📲"
+            echo
+            echo "このメール(Issue)内で完結できます: **① 紹介文をコピー → ② リンクを開く → ③ 「ROOMに投稿する」で貼り付け**"
+            echo
+            cat CATALOG.md
+          } > /tmp/issue_body.md
+
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "📲 今日のROOMカタログ ($(TZ=Asia/Tokyo date +%-m/%-d))" \
+            --body-file /tmp/issue_body.md
