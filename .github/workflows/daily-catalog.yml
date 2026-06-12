@@ -2,8 +2,9 @@ name: Daily ROOM Catalog
 
 on:
   schedule:
-    # 毎日 7:00 JST (22:00 UTC) — 朝にはカタログが完成している
-    - cron: "0 22 * * *"
+    # 毎日 20:00 JST (11:00 UTC) に起動 — GitHubの実行遅延(30〜90分)を見込み、
+    # ROOMのゴールデンタイム(20〜22時)の頭にメールが届くようにする
+    - cron: "0 11 * * *"
   workflow_dispatch: {}
 
 permissions:
