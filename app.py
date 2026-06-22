@@ -66,13 +66,51 @@ def save_history(posted_codes):
         json.dump({"posted": posted_codes[-1000:]}, f, ensure_ascii=False, indent=2)
 
 
+# 月ごとの「今売れる」季節・トレンドキーワード。冬になれば自動で冬物に切り替わる。
+SEASONAL_KEYWORDS = {
+    1: ["加湿器 大容量", "あったか ルームウェア", "福袋", "防寒 グッズ"],
+    2: ["加湿器 卓上", "花粉 対策 メガネ", "バレンタイン チョコ", "あったか インナー"],
+    3: ["花粉 対策 グッズ", "新生活 収納 便利", "春 アウター レディース", "マスク 不織布"],
+    4: ["新生活 便利グッズ", "春 ワンピース", "ピクニック グッズ", "UVカット 帽子"],
+    5: ["UVカット アームカバー", "母の日 ギフト", "サンダル レディース", "日傘 完全遮光"],
+    6: ["日傘 完全遮光", "レイングッズ おしゃれ", "ハンディファン 携帯扇風機", "除湿 カビ対策"],
+    7: ["冷感 寝具 ひんやり", "ハンディファン 携帯扇風機", "UVカット アームカバー", "虫除け 携帯"],
+    8: ["冷感 寝具 ひんやり", "虫除け 携帯", "日焼け止め 人気", "サンダル 歩きやすい"],
+    9: ["残暑 ひんやり グッズ", "秋 ニット レディース", "防災 グッズ セット", "敬老の日 ギフト"],
+    10: ["秋 アウター レディース", "加湿器 卓上", "ハロウィン 仮装", "ブーツ レディース"],
+    11: ["あったか インナー", "加湿器 大容量", "こたつ 布団", "ふるさと納税 返礼品"],
+    12: ["あったか 寝具", "防寒 グッズ", "クリスマス ギフト", "福袋 予約"],
+}
+
+
+def seasonal_keywords():
+    return SEASONAL_KEYWORDS.get(datetime.now(JST).month, [])
+
+
+def _rotate(items, n, offset):
+    n = max(0, min(n, len(items)))
+    if n == 0:
+        return []
+    start = (offset * n) % len(items)
+    return [items[(start + i) % len(items)] for i in range(n)]
+
+
 def todays_keywords(config):
-    """日替わりでキーワードをローテーションし、毎日違う切り口の商品を発掘する"""
-    keywords = config["keywords"]
-    n = max(1, min(config.get("keywords_per_day", 3), len(keywords)))
+    """日替わりで自分のキーワードをローテーションし、さらに季節・トレンドを上乗せする。
+
+    毎日違う切り口の商品を発掘するため、固定キーワードを日替わりで回しつつ、
+    今月の旬のキーワード(seasonal_per_day件)を混ぜて季節商品も自動で拾う。
+    """
     day = datetime.now(JST).timetuple().tm_yday
-    start = (day * n) % len(keywords)
-    return [keywords[(start + i) % len(keywords)] for i in range(n)]
+    picked = _rotate(config["keywords"], config.get("keywords_per_day", 3), day)
+    picked += _rotate(seasonal_keywords(), config.get("seasonal_per_day", 0), day)
+    # 順序を保ったまま重複を除去
+    seen, out = set(), []
+    for kw in picked:
+        if kw not in seen:
+            seen.add(kw)
+            out.append(kw)
+    return out
 
 
 def _api_headers():
