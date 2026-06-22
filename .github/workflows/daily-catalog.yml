@@ -48,7 +48,14 @@ jobs:
             echo "変更なし。コミットをスキップします。"
           else
             git commit -m "Update ROOM catalog ($(TZ=Asia/Tokyo date +%Y-%m-%d))"
-            git push
+            # 実行中にmainが進んでいてもpushが失敗しないよう、リベースして再試行
+            for attempt in 1 2 3; do
+              if git push; then
+                break
+              fi
+              echo "push失敗。最新を取り込んで再試行します ($attempt/3)"
+              git pull --rebase origin "${GITHUB_REF_NAME}"
+            done
           fi
 
       # Issueを作成すると@メンション通知メールが届く(本文に紹介文入りカタログを丸ごと掲載)
