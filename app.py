@@ -231,8 +231,8 @@ def select_items(candidates, config, history):
     単純な上位N件だと毎回同じ定番品になるため、
     ① スコア上位プールに絞って質を担保したうえで、
     ② スコアを重みにした重み付きランダムで選び、
-    ③ 同一店舗は1つまで・同一キーワードは最大2つまでに制限して
-    ジャンルや店の偏りをなくす。
+    ③ 同一店舗は1つまで・同一キーワード/同一ジャンルは上限ありに制限して
+    ジャンルや店の偏り(例: 傘ばかり)をなくす。
     """
     posted = set(history)
     n = config["items_per_day"]
@@ -252,19 +252,26 @@ def select_items(candidates, config, history):
 
     rng = _today_rng()
     selected, rejected = [], []
-    used_shops, used_keywords = set(), {}
-    max_per_keyword = max(2, math.ceil(n / 2))  # 1ジャンルがカタログの過半を占めないように
+    used_shops, used_keywords, used_genres = set(), {}, {}
+    max_per_keyword = max(2, math.ceil(n / 2))  # 1キーワードがカタログの過半を占めないように
+    max_per_genre = 2  # 同じ商品ジャンル(例: 傘)は最大2つまで
 
     while pool and len(selected) < n:
         weights = [s for s, _ in pool]
         idx = rng.choices(range(len(pool)), weights=weights, k=1)[0]
         s, d = pool.pop(idx)
-        shop, kw = _shop_of(d), d.get("_keyword")
-        if shop in used_shops or used_keywords.get(kw, 0) >= max_per_keyword:
+        shop, kw, genre = _shop_of(d), d.get("_keyword"), d.get("genreId")
+        if (
+            shop in used_shops
+            or used_keywords.get(kw, 0) >= max_per_keyword
+            or (genre and used_genres.get(genre, 0) >= max_per_genre)
+        ):
             rejected.append((s, d))
             continue
         used_shops.add(shop)
         used_keywords[kw] = used_keywords.get(kw, 0) + 1
+        if genre:
+            used_genres[genre] = used_genres.get(genre, 0) + 1
         selected.append((s, d))
 
     # 多様性制約で枠が埋まらなければ、弾いた候補からスコア順に補充
