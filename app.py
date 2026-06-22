@@ -10,6 +10,7 @@ AIで紹介文を生成し、コピペするだけで投稿できるカタログ
 import json
 import math
 import os
+import random
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -84,12 +85,13 @@ def _api_headers():
     }
 
 
-def search_items(keyword, sort, use_affiliate=True):
+def search_items(keyword, sort, page=1, use_affiliate=True):
     params = {
         "applicationId": RAKUTEN_APP_ID,
         "accessKey": RAKUTEN_ACCESS_KEY,
         "keyword": keyword,
         "hits": 30,
+        "page": page,
         "sort": sort,
         "format": "json",
     }
@@ -107,7 +109,7 @@ def search_items(keyword, sort, use_affiliate=True):
                 # affiliateIdの形式不正でも全体が止まらないよう、IDなしで再試行
                 print(f"  [warn] 楽天API 400 ({detail}) — affiliateIdを外して再試行します")
                 time.sleep(1)
-                return search_items(keyword, sort, use_affiliate=False)
+                return search_items(keyword, sort, page=page, use_affiliate=False)
             print(f"  [warn] 楽天API {res.status_code} keyword={keyword!r}: {detail}")
             return []
         res.raise_for_status()
@@ -119,13 +121,30 @@ def search_items(keyword, sort, use_affiliate=True):
         time.sleep(1)  # 楽天APIのレートリミット(1req/秒)を厳守
 
 
+def _today_rng():
+    """日付シードの乱数。同じ日に再実行しても結果は安定、日が変われば変わる。"""
+    return random.Random(int(datetime.now(JST).strftime("%Y%m%d")))
+
+
+# 売れ筋順だけだと毎回同じ定番品が出るため、複数のソート軸を日替わりで混ぜる
+SORT_POOL = ["-reviewCount", "-affiliateRate", "standard", "-updateTimestamp", "+itemPrice"]
+
+
 def fetch_candidates(config):
-    """キーワード×(売れ筋順・高料率順)で広く取得し、商品コードで重複排除"""
+    """キーワード×(日替わりのソート軸・ページ)で広く取得し、商品コードで重複排除。
+
+    毎回同じ商品ばかり出るのを防ぐため、ソート順とページを日替わりで変えて
+    「売れ筋の定番」だけでなく、新着・中堅価格帯・別の人気商品まで候補に入れる。
+    """
+    rng = _today_rng()
     candidates = {}
     for kw in todays_keywords(config):
         print(f"検索中: {kw}")
-        for sort in ("-reviewCount", "-affiliateRate"):
-            for item in search_items(kw, sort):
+        # 売れ筋(質の担保)は必ず含めつつ、残りは日替わりで別の軸を混ぜる
+        sorts = ["-reviewCount"] + rng.sample(SORT_POOL[1:], 2)
+        for sort in sorts:
+            page = rng.randint(1, 3)  # 1ページ目の超定番だけでなく2〜3ページ目も掘る
+            for item in search_items(kw, sort, page=page):
                 data = item["Item"]
                 data["_keyword"] = kw
                 candidates.setdefault(data["itemCode"], data)
@@ -164,8 +183,21 @@ def score_item(data, config):
     return score
 
 
+def _shop_of(data):
+    return data["itemCode"].split(":")[0]
+
+
 def select_items(candidates, config, history):
+    """質の高い候補プールから、スコアを重みにした抽選で多様に選ぶ。
+
+    単純な上位N件だと毎回同じ定番品になるため、
+    ① スコア上位プールに絞って質を担保したうえで、
+    ② スコアを重みにした重み付きランダムで選び、
+    ③ 同一店舗は1つまで・同一キーワードは最大2つまでに制限して
+    ジャンルや店の偏りをなくす。
+    """
     posted = set(history)
+    n = config["items_per_day"]
     scored = []
     for data in candidates:
         if data["itemCode"] in posted:
@@ -173,8 +205,36 @@ def select_items(candidates, config, history):
         s = score_item(data, config)
         if s is not None:
             scored.append((s, data))
+    if not scored:
+        return []
+
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [(s, d) for s, d in scored[: config["items_per_day"]]]
+    # 質を担保するため上位プールに限定(でも上位N件より広く取って抽選の幅を持たせる)
+    pool = scored[: max(n * 6, 30)]
+
+    rng = _today_rng()
+    selected, rejected = [], []
+    used_shops, used_keywords = set(), {}
+    max_per_keyword = max(2, math.ceil(n / 2))  # 1ジャンルがカタログの過半を占めないように
+
+    while pool and len(selected) < n:
+        weights = [s for s, _ in pool]
+        idx = rng.choices(range(len(pool)), weights=weights, k=1)[0]
+        s, d = pool.pop(idx)
+        shop, kw = _shop_of(d), d.get("_keyword")
+        if shop in used_shops or used_keywords.get(kw, 0) >= max_per_keyword:
+            rejected.append((s, d))
+            continue
+        used_shops.add(shop)
+        used_keywords[kw] = used_keywords.get(kw, 0) + 1
+        selected.append((s, d))
+
+    # 多様性制約で枠が埋まらなければ、弾いた候補からスコア順に補充
+    for s, d in sorted(rejected, key=lambda x: x[0], reverse=True):
+        if len(selected) >= n:
+            break
+        selected.append((s, d))
+    return selected
 
 
 def fallback_caption(data, config):
