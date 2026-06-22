@@ -9,7 +9,8 @@
     "スニーカー クリーナー",
     "古着 リメイク 雑貨"
   ],
-  "keywords_per_day": 5,
+  "keywords_per_day": 4,
+  "seasonal_per_day": 2,
   "items_per_day": 5,
   "min_price": 1000,
   "max_price": 15000,
