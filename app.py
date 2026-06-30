@@ -11,6 +11,7 @@ import json
 import math
 import os
 import random
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -294,6 +295,53 @@ def fallback_caption(data, config):
     )
 
 
+# ROOMが投稿時に弾く薬機法・健康関連のNGワードを、意味の近い安全な表現へ置換する。
+# (ROOMは病名・症状名や効能の断定を「ご利用できない文字列」として拒否する)
+# config.json の "ng_replacements" で追加・上書き可能。
+DEFAULT_NG_REPLACEMENTS = {
+    "熱中症": "夏の暑さ",
+    "花粉症": "花粉",
+    "感染症": "気になる季節",
+    "肩こり": "肩の疲れ",
+    "腰痛": "腰の負担",
+    "冷え性": "冷え",
+    "便秘": "すっきり",
+    "不眠": "寝つき",
+    "アトピー": "肌",
+    "湿疹": "肌",
+    "ニキビ": "肌",
+    "治る": "うれしい変化",
+    "完治": "うれしい変化",
+    "予防します": "対策に",
+    "予防できます": "対策に",
+}
+
+
+def sanitize_caption(caption, config):
+    """ROOM投稿で弾かれる/AIっぽく見える要素を機械的に除去する安全網。
+
+    ① マークダウン装飾(**太字**, *斜体*, #見出し, > 引用, - 箇条書き)を除去
+       — ROOMでは記号がそのまま表示され、いかにもAI生成に見えるため。
+    ② 薬機法・健康関連のNGワードを安全な表現に置換 — ROOMの投稿時拒否を防ぐ。
+    """
+    # ① マークダウン記法の除去
+    caption = caption.replace("**", "").replace("__", "")
+    # 見出し(# のあとに空白)だけ除去。空白なしの #楽天room はハッシュタグなので残す
+    caption = re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", caption)
+    caption = re.sub(r"(?m)^\s{0,3}>\s?", "", caption)         # 引用
+    caption = re.sub(r"(?m)^\s{0,3}[-•]\s+", "", caption)      # 箇条書き
+    caption = caption.replace("*", "")                          # 残った装飾アスタリスク
+
+    # ② NGワードの置換(デフォルト + config上書き)
+    replacements = {**DEFAULT_NG_REPLACEMENTS, **config.get("ng_replacements", {})}
+    for ng, safe in replacements.items():
+        caption = caption.replace(ng, safe)
+
+    # 余分な空行を整理
+    caption = re.sub(r"\n{3,}", "\n\n", caption).strip()
+    return caption
+
+
 def generate_caption(data, config):
     """購買心理(社会的証明・ベネフィット・行動喚起)を組み込んだ紹介文をAIで生成"""
     month = datetime.now(JST).month
@@ -308,13 +356,18 @@ def generate_caption(data, config):
 - いまは{month}月。季節感を一言入れる(無理なら省略可)。
 - 最後に行動喚起を1行(例: お買い物マラソンの候補にどうぞ 等)。
 - 文末にハッシュタグを4〜5個。{ ' '.join(config.get('hashtags_base', [])) } から1〜2個+商品ジャンルに合うタグ。
-- 誇大表現(「絶対」「最安」「必ず痩せる」等)と効果効能の断定は禁止。
+
+【禁止事項(厳守)】
+- マークダウン記法(**太字**、*斜体*、#見出し、>引用、-箇条書き 等の記号装飾)は一切使わない。ROOMでは記号がそのまま表示されてしまう。
+- 病名・症状名(熱中症・花粉症・肩こり・腰痛・冷え性 等)や、薬機法に触れる効能の断定(治る・予防・改善・殺菌で病気を防ぐ 等)は使わない。体感は「涼しく感じる」「快適」程度の主観表現にとどめる。
+- 誇大表現(「絶対」「最安」「必ず痩せる」等)は使わない。
+- AIっぽい誇張・定型句を避け、知人にすすめるような自然で素直な口調にする(「なんと」「まさに」「〜の救世主」「見つけちゃいました」「〜なんです」の連発を避ける)。
 
 【商品名】{data['itemName']}
 【価格】{data['itemPrice']}円(送料{'込み' if data.get('postageFlag') == 0 else '別'})
 【商品説明】{(data.get('itemCaption') or '')[:500]}
 
-紹介文の本文だけを出力してください。"""
+紹介文の本文だけを、記号装飾なしのプレーンテキストで出力してください。"""
 
     caption = None
     for attempt in range(3):  # 無料枠のレートリミットに当たっても再試行で拾う
@@ -337,6 +390,9 @@ def generate_caption(data, config):
         print("  [warn] テンプレ文を使用します")
         caption = fallback_caption(data, config)
     time.sleep(8)  # Gemini無料枠のレートリミット(10req/分)を厳守
+
+    # AI/テンプレ問わず、NGワード・記号装飾を機械的に除去(ROOMの投稿拒否を防ぐ)
+    caption = sanitize_caption(caption, config)
 
     # 楽天ROOMの文字数上限を絶対に超えないための物理リミッター
     if len(caption) > 480:
