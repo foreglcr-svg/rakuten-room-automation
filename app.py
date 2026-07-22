@@ -117,6 +117,30 @@ def todays_keywords(config):
     return out
 
 
+# 大まかなカテゴリ判定用ルール(先にマッチしたものを採用)。
+# 楽天のジャンルIDはバッグが複数IDに割れるなど粒度が細かすぎるため、
+# 商品名/キーワードから大分類を推定してカタログ内の偏り(例: トート3連発)を防ぐ。
+CATEGORY_RULES = [
+    ("bag", ["バッグ", "トート", "リュック", "サコッシュ", "ショルダー", "ボディバッグ", "かばん", "鞄"]),
+    ("shoes", ["スニーカー", "ブーツ", "ローファー", "サンダル", "シューズ", "革靴", "モカシン"]),
+    ("hat", ["キャップ", "ハット", "帽子", "ベレー", "ニットキャップ", "ビーニー"]),
+    ("accessory", ["アクセサリー", "ピアス", "イヤリング", "ネックレス", "ペンダント", "リング", "指輪", "ブレスレット", "腕時計", "シルバー", "バンダナ", "サングラス", "眼鏡", "メガネ", "財布", "ウォレット", "ベルト"]),
+    ("outerwear", ["ジャケット", "パーカー", "パーカ", "ベスト", "ブルゾン", "コート", "アウター", "マウンテンパーカー", "コーチジャケット", "フリース", "ダウンジャケット", "ダウンベスト", "ブレザー"]),
+    ("tops", ["シャツ", "tシャツ", "ｔシャツ", "スウェット", "ニット", "カットソー", "ネル", "カーディガン", "トレーナー", "ポロ"]),
+    ("bottoms", ["パンツ", "デニム", "ジーンズ", "チノ", "カーゴ", "スラックス", "ショートパンツ", "ショーツ", "スカート"]),
+    ("gear", ["ボトル", "ナルゲン", "ランタン", "テント", "チェア", "ギア"]),
+]
+
+
+def category_of(data):
+    """商品名(なければ発掘キーワード)から大まかなカテゴリを推定する。"""
+    text = (data.get("itemName", "") + " " + data.get("_keyword", "")).lower()
+    for cat, words in CATEGORY_RULES:
+        if any(w.lower() in text for w in words):
+            return cat
+    return "other"
+
+
 def _api_headers():
     from urllib.parse import urlsplit
 
@@ -261,26 +285,25 @@ def select_items(candidates, config, history):
 
     rng = _today_rng()
     selected, rejected = [], []
-    used_shops, used_keywords, used_genres = set(), {}, {}
-    max_per_keyword = max(2, math.ceil(n / 2))  # 1キーワードがカタログの過半を占めないように
-    max_per_genre = 2  # 同じ商品ジャンル(例: 傘)は最大2つまで
+    used_shops, used_keywords, used_categories = set(), {}, {}
+    max_per_keyword = config.get("max_per_keyword", 2)  # 1キーワードから最大2つまで
+    max_per_category = config.get("max_per_category", 2)  # 大分類(バッグ/靴等)ごと最大2つまで
 
     while pool and len(selected) < n:
         weights = [s for s, _ in pool]
         idx = rng.choices(range(len(pool)), weights=weights, k=1)[0]
         s, d = pool.pop(idx)
-        shop, kw, genre = _shop_of(d), d.get("_keyword"), d.get("genreId")
+        shop, kw, cat = _shop_of(d), d.get("_keyword"), category_of(d)
         if (
             shop in used_shops
             or used_keywords.get(kw, 0) >= max_per_keyword
-            or (genre and used_genres.get(genre, 0) >= max_per_genre)
+            or (cat != "other" and used_categories.get(cat, 0) >= max_per_category)
         ):
             rejected.append((s, d))
             continue
         used_shops.add(shop)
         used_keywords[kw] = used_keywords.get(kw, 0) + 1
-        if genre:
-            used_genres[genre] = used_genres.get(genre, 0) + 1
+        used_categories[cat] = used_categories.get(cat, 0) + 1
         selected.append((s, d))
 
     # 多様性制約で枠が埋まらなければ、弾いた候補からスコア順に補充
