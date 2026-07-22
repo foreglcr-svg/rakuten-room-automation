@@ -34,7 +34,7 @@
   "max_price": 40000,
   "min_review_count": 3,
   "min_review_average": 3.8,
-  "max_per_keyword": 2,
+  "max_per_keyword": 1,
   "max_per_category": 2,
   "exclude_keywords": ["医療用", "ウィッグ", "かつら", "介護", "ナース", "コスプレ", "作業服", "喪服", "偽物", "互換"],
   "hashtags_base": ["#楽天room", "#古着", "#アメカジ"]
