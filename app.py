@@ -99,14 +99,29 @@ def _pick(items, n, rng):
 
 
 def todays_keywords(config):
-    """毎日フレッシュな組み合わせのキーワードを作り、季節の旬を軽く1つ足す。
+    """毎日フレッシュな組み合わせのキーワードを作る。
 
-    固定の組が周期的に戻ると飽きるため、キーワードは日付シードでシャッフルして
-    毎日違う切り口に。さらに今月のトレンド(seasonal_per_day件)を上乗せする。
+    ガジェット/小物が毎日必ず候補に入るよう、must_cover_categories の各カテゴリから
+    最低1キーワードを確保してから、残りを日付シードのシャッフルで埋める。
+    さらに今月のトレンド(seasonal_per_day件)を上乗せする。
     """
     rng = _today_rng()
-    picked = _pick(config["keywords"], config.get("keywords_per_day", 3), rng)
+    keywords = list(config["keywords"])
+    n = config.get("keywords_per_day", 5)
+
+    picked = []
+    # 必ずカバーしたいカテゴリ(ガジェット・小物)から1本ずつ確保
+    for cat in config.get("must_cover_categories", []):
+        cands = [k for k in keywords if category_of({"itemName": k}) == cat and k not in picked]
+        if cands:
+            picked.append(rng.choice(cands))
+    # 残り枠を、まだ選ばれていないキーワードのシャッフルで埋める
+    rest = [k for k in keywords if k not in picked]
+    rng.shuffle(rest)
+    picked += rest[: max(0, n - len(picked))]
+    # 季節キーワードを上乗せ
     picked += _pick(seasonal_keywords(), config.get("seasonal_per_day", 0), rng)
+
     # 順序を保ったまま重複を除去
     seen, out = set(), []
     for kw in picked:
@@ -123,7 +138,7 @@ CATEGORY_RULES = [
     ("bag", ["バッグ", "トート", "リュック", "バックパック", "デイパック", "ザック", "サコッシュ", "ショルダー", "ボディバッグ", "かばん", "鞄"]),
     ("shoes", ["スニーカー", "ブーツ", "ローファー", "サンダル", "シューズ", "革靴", "モカシン"]),
     ("hat", ["キャップ", "ハット", "帽子", "ベレー", "ニットキャップ", "ビーニー"]),
-    ("accessory", ["アクセサリー", "ピアス", "イヤリング", "ネックレス", "ペンダント", "リング", "指輪", "ブレスレット", "腕時計", "シルバー", "バンダナ", "サングラス", "眼鏡", "メガネ", "財布", "ウォレット", "ベルト"]),
+    ("accessory", ["アクセサリー", "ピアス", "イヤリング", "ネックレス", "ペンダント", "リング", "指輪", "ブレスレット", "腕時計", "シルバー", "バンダナ", "サングラス", "眼鏡", "メガネ", "財布", "ウォレット", "ベルト", "キーケース", "キーホルダー", "カラビナ", "靴下", "ソックス", "マネークリップ", "カードケース", "ハンカチ"]),
     ("outerwear", ["ジャケット", "パーカー", "パーカ", "ベスト", "ブルゾン", "コート", "アウター", "マウンテンパーカー", "コーチジャケット", "フリース", "ダウンジャケット", "ダウンベスト", "ブレザー"]),
     ("tops", ["シャツ", "tシャツ", "ｔシャツ", "スウェット", "ニット", "カットソー", "ネル", "カーディガン", "トレーナー", "ポロ"]),
     ("bottoms", ["パンツ", "デニム", "ジーンズ", "チノ", "カーゴ", "スラックス", "ショートパンツ", "ショーツ", "スカート"]),
@@ -287,33 +302,77 @@ def select_items(candidates, config, history):
     pool = scored[: max(n * 6, 30)]
 
     rng = _today_rng()
-    selected, rejected = [], []
-    used_shops, used_keywords, used_categories = set(), {}, {}
-    max_per_keyword = config.get("max_per_keyword", 2)  # 1キーワードから最大2つまで
-    max_per_category = config.get("max_per_category", 2)  # 大分類(バッグ/靴等)ごと最大2つまで
+    max_per_keyword = config.get("max_per_keyword", 2)
+    max_per_category = config.get("max_per_category", 2)
+    min_categories = config.get("min_categories", {})  # 例: {gadget:1, accessory:1}
+    max_per_group = config.get("max_per_group", {})     # 例: {clothing: 2}
+    # カテゴリ→グループの逆引き(例: tops→clothing)
+    cat_to_group = {}
+    for grp, cats in config.get("category_groups", {}).items():
+        for c in cats:
+            cat_to_group[c] = grp
 
-    while pool and len(selected) < n:
-        weights = [s for s, _ in pool]
-        idx = rng.choices(range(len(pool)), weights=weights, k=1)[0]
-        s, d = pool.pop(idx)
+    selected = []
+    used_shops, used_keywords, used_categories, group_counts = set(), {}, {}, {}
+
+    def can_take(d, ignore_group=False):
         shop, kw, cat = _shop_of(d), d.get("_keyword"), category_of(d)
-        if (
-            shop in used_shops
-            or used_keywords.get(kw, 0) >= max_per_keyword
-            or (cat != "other" and used_categories.get(cat, 0) >= max_per_category)
-        ):
-            rejected.append((s, d))
-            continue
-        used_shops.add(shop)
-        used_keywords[kw] = used_keywords.get(kw, 0) + 1
-        used_categories[cat] = used_categories.get(cat, 0) + 1
-        selected.append((s, d))
+        if shop in used_shops:
+            return False
+        if used_keywords.get(kw, 0) >= max_per_keyword:
+            return False
+        if cat != "other" and used_categories.get(cat, 0) >= max_per_category:
+            return False
+        if not ignore_group:
+            grp = cat_to_group.get(cat)
+            if grp and group_counts.get(grp, 0) >= max_per_group.get(grp, 99):
+                return False
+        return True
 
-    # 多様性制約で枠が埋まらなければ、弾いた候補からスコア順に補充
-    for s, d in sorted(rejected, key=lambda x: x[0], reverse=True):
+    def take(entry):
+        s, d = entry
+        cat = category_of(d)
+        used_shops.add(_shop_of(d))
+        used_keywords[d.get("_keyword")] = used_keywords.get(d.get("_keyword"), 0) + 1
+        used_categories[cat] = used_categories.get(cat, 0) + 1
+        grp = cat_to_group.get(cat)
+        if grp:
+            group_counts[grp] = group_counts.get(grp, 0) + 1
+        selected.append(entry)
+        pool.remove(entry)
+
+    def weighted_pick(entries):
+        return entries[rng.choices(range(len(entries)), weights=[s for s, _ in entries], k=1)[0]]
+
+    # ① ガジェット・小物などの最低保証カテゴリを先に確保
+    for cat, need in min_categories.items():
+        for _ in range(need):
+            if len(selected) >= n:
+                break
+            cands = [e for e in pool if category_of(e[1]) == cat and can_take(e[1])]
+            if not cands:
+                break
+            take(weighted_pick(cands))
+
+    # ② 残り枠を重み付きランダムで、店/キーワード/カテゴリ/グループの上限を守って埋める
+    while pool and len(selected) < n:
+        takeable = [e for e in pool if can_take(e[1])]
+        if not takeable:
+            break
+        take(weighted_pick(takeable))
+
+    # ③ それでも埋まらなければ、グループ上限だけ緩めて補充(衣類上限は最後に妥協)
+    while pool and len(selected) < n:
+        takeable = [e for e in pool if can_take(e[1], ignore_group=True)]
+        if not takeable:
+            break
+        take(weighted_pick(takeable))
+
+    # ④ 最後の保険: スコア順に不足分を補充
+    for entry in sorted(pool, key=lambda x: x[0], reverse=True):
         if len(selected) >= n:
             break
-        selected.append((s, d))
+        selected.append(entry)
     return selected
 
 
