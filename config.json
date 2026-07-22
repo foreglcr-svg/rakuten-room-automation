@@ -33,7 +33,15 @@
     "スノーピーク ランタン",
     "SOTO アウトドア ランタン",
     "ジッポー Zippo オイルライター",
-    "バルミューダ ランタン"
+    "バルミューダ ランタン",
+    "レイバン サングラス",
+    "ポーター 財布 吉田カバン",
+    "アノニマスイズム 靴下",
+    "真鍮 キーホルダー ヌメ革",
+    "レザー キーケース ヌメ革",
+    "チャムス カラビナ 小物",
+    "レザーベルト メンズ 本革",
+    "グローブ トロッター サングラス"
   ],
   "seasonal_per_day": 1,
   "keywords_per_day": 5,
@@ -44,6 +52,10 @@
   "min_review_average": 3.8,
   "max_per_keyword": 1,
   "max_per_category": 2,
+  "must_cover_categories": ["gadget", "accessory"],
+  "min_categories": {"gadget": 1, "accessory": 1},
+  "category_groups": {"clothing": ["tops", "bottoms", "outerwear"]},
+  "max_per_group": {"clothing": 2},
   "exclude_keywords": ["医療用", "ウィッグ", "かつら", "介護", "ナース", "コスプレ", "作業服", "喪服", "偽物", "互換"],
   "hashtags_base": ["#楽天room", "#古着", "#アメカジ"]
 }
