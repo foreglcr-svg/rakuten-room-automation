@@ -58,25 +58,34 @@ jobs:
             done
           fi
 
-      # Issueを作成すると@メンション通知メールが届く(本文に紹介文入りカタログを丸ごと掲載)
-      - name: Email notification via issue
+      # 1つの固定Issueを使い回し、毎日カタログをコメント追記する。
+      # Issueを閉じないので「クローズ通知メール」は発生しない。届くのはカタログ通知だけ。
+      - name: Email notification via issue comment
         if: hashFiles('CATALOG.md') != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          TITLE: "📲 ROOMカタログ（毎日更新）"
         run: |
-          # 前日までのカタログIssueは自動クローズして受信箱を汚さない
-          gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-            --search "in:title ROOMカタログ" --json number --jq '.[].number' \
-            | xargs -r -I{} gh issue close {} --repo "$GITHUB_REPOSITORY" || true
-
           {
-            echo "@${GITHUB_REPOSITORY_OWNER} 今日のカタログが完成しました📲"
+            echo "@${GITHUB_REPOSITORY_OWNER} 今日のカタログが届きました📲（$(TZ=Asia/Tokyo date +%-m/%-d)）"
             echo
-            echo "このメール(Issue)内で完結できます: **① 紹介文をコピー → ② リンクを開く → ③ 「ROOMに投稿する」で貼り付け**"
+            echo "① 紹介文をコピー → ② リンクを開く → ③「ROOMに投稿する」で貼り付け"
             echo
             cat CATALOG.md
           } > /tmp/issue_body.md
 
-          gh issue create --repo "$GITHUB_REPOSITORY" \
-            --title "📲 今日のROOMカタログ ($(TZ=Asia/Tokyo date +%-m/%-d))" \
-            --body-file /tmp/issue_body.md
+          # 固定タイトルの常設Issueを探す(タイトル完全一致)
+          NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
+            --json number,title --jq "[.[] | select(.title==\"$TITLE\")][0].number // empty")
+
+          if [ -z "$NUM" ]; then
+            # 初回だけ作成(以降はこのIssueを使い回す)
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file /tmp/issue_body.md
+          else
+            # 前回までのbotコメントを削除して最新カタログだけ残す(削除は通知されない)
+            gh api "repos/$GITHUB_REPOSITORY/issues/$NUM/comments" --paginate \
+              --jq '.[] | select(.user.login=="github-actions[bot]") | .id' \
+              | xargs -r -I{} gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/comments/{}" || true
+            # 新しいカタログをコメント投稿(@メンションでメール通知)
+            gh issue comment "$NUM" --repo "$GITHUB_REPOSITORY" --body-file /tmp/issue_body.md
+          fi
