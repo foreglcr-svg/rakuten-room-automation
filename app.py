@@ -512,6 +512,23 @@ def generate_caption(data, config):
     return caption
 
 
+def raw_item_url(data):
+    """楽天アプリを起動させるための「生の商品URL」を返す。
+
+    affiliateIdを付けて検索すると itemUrl も affiliateUrl も hb.afl の
+    リダイレクト付きURLになり、iOSでアプリのUniversal Linkが発火しない。
+    その場合はURL内の pc= パラメータに埋まった生の商品URLを取り出す。
+    """
+    from urllib.parse import parse_qs, unquote, urlsplit
+
+    u = data.get("itemUrl") or data.get("affiliateUrl", "") or ""
+    if "hb.afl.rakuten.co.jp" in u or "a.r10.to" in u:
+        pc = parse_qs(urlsplit(u).query).get("pc", [None])[0]
+        if pc:
+            return unquote(pc)
+    return u
+
+
 def build_catalog(entries):
     now = datetime.now(JST)
     lines = [
@@ -525,10 +542,8 @@ def build_catalog(entries):
         "",
     ]
     for i, (score, data, caption) in enumerate(entries, 1):
-        # 「開く」リンクは生の商品URLを優先。アフィリのリダイレクト付きURL(hb.afl)は
-        # iOSで楽天アプリのUniversal Linkを発火させずブラウザで開いてしまうため。
-        # ROOM再投稿では投稿時にROOM側がアフィリを付与するので、自分のタップにアフィリは不要。
-        url = data.get("itemUrl") or data.get("affiliateUrl", "")
+        # 「開く」リンクは生の商品URL(アフィリのリダイレクトはアプリ起動を妨げるため除去)
+        url = raw_item_url(data)
         image = data["mediumImageUrls"][0]["imageUrl"] if data.get("mediumImageUrls") else ""
         lines += [
             f"## {i}. {data['itemName']}",
@@ -575,7 +590,7 @@ def build_html(entries):
     now = datetime.now(JST)
     cards = []
     for i, (score, data, caption) in enumerate(entries, 1):
-        url = data.get("itemUrl") or data.get("affiliateUrl", "")
+        url = raw_item_url(data)
         image = data["mediumImageUrls"][0]["imageUrl"] if data.get("mediumImageUrls") else ""
         postage = "送料込み" if data.get("postageFlag") == 0 else "送料別"
         cards.append(f"""
