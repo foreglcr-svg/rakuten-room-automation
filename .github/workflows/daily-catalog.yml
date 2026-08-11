@@ -44,6 +44,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add posted_items.json
           [ -f CATALOG.md ] && git add CATALOG.md || true
+          [ -f docs/index.html ] && git add docs/index.html || true
           if git diff --cached --quiet; then
             echo "変更なし。コミットをスキップします。"
           else
@@ -66,10 +67,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TITLE: "📲 ROOMカタログ（毎日更新）"
         run: |
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          PAGES_URL="https://${OWNER}.github.io/${REPO}/"
           {
             echo "@${GITHUB_REPOSITORY_OWNER} 今日のカタログが届きました📲（$(TZ=Asia/Tokyo date +%-m/%-d)）"
             echo
-            echo "① 紹介文をコピー → ② リンクを開く → ③「ROOMに投稿する」で貼り付け"
+            echo "▼ スマホはこちらが速いです(1タップでコピー＆アプリで開く)"
+            echo "$PAGES_URL"
+            echo
+            echo "使い方: ① 紹介文をコピー → ② 商品ページを開く → ③ 共有から「ROOMに投稿」で貼り付け"
+            echo "※ページはSafari/Chromeで開いてください(アプリ内ブラウザだと楽天アプリが起動しません)"
+            echo
+            echo "---"
             echo
             cat CATALOG.md
           } > /tmp/issue_body.md
