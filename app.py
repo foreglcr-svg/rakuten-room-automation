@@ -41,6 +41,7 @@ DISCORD_WEBHOOK_URL = _env("DISCORD_WEBHOOK_URL")  # 任意(カタログ更新�
 CONFIG_PATH = "config.json"
 HISTORY_PATH = "posted_items.json"
 CATALOG_PATH = "CATALOG.md"
+HTML_PATH = "docs/index.html"  # GitHub Pages公開用(1タップコピー+アプリ起動)
 
 # 2026年の楽天APIインフラ刷新後の新エンドポイント(旧app.rakuten.co.jpは廃止済み)
 ICHIBA_SEARCH_URL = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20220601"
@@ -524,7 +525,10 @@ def build_catalog(entries):
         "",
     ]
     for i, (score, data, caption) in enumerate(entries, 1):
-        url = data.get("affiliateUrl") or data.get("itemUrl", "")
+        # 「開く」リンクは生の商品URLを優先。アフィリのリダイレクト付きURL(hb.afl)は
+        # iOSで楽天アプリのUniversal Linkを発火させずブラウザで開いてしまうため。
+        # ROOM再投稿では投稿時にROOM側がアフィリを付与するので、自分のタップにアフィリは不要。
+        url = data.get("itemUrl") or data.get("affiliateUrl", "")
         image = data["mediumImageUrls"][0]["imageUrl"] if data.get("mediumImageUrls") else ""
         lines += [
             f"## {i}. {data['itemName']}",
@@ -548,6 +552,140 @@ def build_catalog(entries):
     lines.append(f"_自動生成: {now:%Y-%m-%d %H:%M} JST_\n")
     with open(CATALOG_PATH, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
+
+
+def _esc(text):
+    """HTMLエスケープ(属性・本文兼用)"""
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def build_html(entries):
+    """スマホで1タップコピー+アプリ起動できるHTMLカタログ(GitHub Pages用)を生成。
+
+    - 各紹介文に「コピー」ボタン(クリック内で同期的にクリップボードへ)
+    - 「商品ページを開く」は生の商品URL(楽天アプリを起動させるため)
+    - メールにはこのページのURL1本だけ載せ、往復をなくす
+    """
+    now = datetime.now(JST)
+    cards = []
+    for i, (score, data, caption) in enumerate(entries, 1):
+        url = data.get("itemUrl") or data.get("affiliateUrl", "")
+        image = data["mediumImageUrls"][0]["imageUrl"] if data.get("mediumImageUrls") else ""
+        postage = "送料込み" if data.get("postageFlag") == 0 else "送料別"
+        cards.append(f"""
+    <article class="card">
+      <div class="num">{i}</div>
+      {f'<img loading="lazy" src="{_esc(image)}" alt="">' if image else ''}
+      <h2>{_esc(data['itemName'])}</h2>
+      <p class="meta">💰 {data['itemPrice']:,}円({postage}) ・ ⭐ {data.get('reviewCount', 0)}件 平均{data.get('reviewAverage', '-')}</p>
+      <p class="step">① 紹介文をコピー</p>
+      <pre class="cap" id="cap{i}">{_esc(caption)}</pre>
+      <button class="copy" type="button" data-target="cap{i}">📋 紹介文をコピー</button>
+      <p class="step">② 商品ページをアプリで開く → ③ 共有から「ROOMに投稿」→ 貼り付け</p>
+      <a class="open" href="{_esc(url)}" target="_blank" rel="noopener">🛒 商品ページを開く</a>
+    </article>""")
+
+    html = f"""<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>📲 {now:%-m/%-d} 楽天ROOMカタログ</title>
+<style>
+  :root {{ --bg:#f7f6f3; --card:#fff; --fg:#1a1a1a; --sub:#666; --line:#e5e3de; --accent:#bf0000; --btn:#111; }}
+  @media (prefers-color-scheme: dark) {{
+    :root {{ --bg:#141414; --card:#1e1e1e; --fg:#f0f0f0; --sub:#9a9a9a; --line:#333; --accent:#ff6b6b; --btn:#e8e8e8; }}
+  }}
+  * {{ box-sizing:border-box; }}
+  body {{ margin:0; background:var(--bg); color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+    line-height:1.7; -webkit-text-size-adjust:100%; }}
+  header {{ padding:20px 16px 8px; }}
+  header h1 {{ font-size:19px; margin:0 0 6px; }}
+  header p {{ font-size:13px; color:var(--sub); margin:4px 0; }}
+  .note {{ background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:10px 12px; font-size:12.5px; color:var(--sub); margin:10px 16px; }}
+  main {{ padding:8px 12px 40px; }}
+  .card {{ position:relative; background:var(--card); border:1px solid var(--line);
+    border-radius:14px; padding:16px; margin:0 0 18px; }}
+  .num {{ position:absolute; top:-10px; left:-6px; background:var(--accent); color:#fff;
+    width:26px; height:26px; border-radius:50%; display:flex; align-items:center;
+    justify-content:center; font-size:14px; font-weight:700; }}
+  .card img {{ width:96px; height:96px; object-fit:contain; float:right; margin:0 0 8px 10px;
+    background:#fff; border-radius:8px; }}
+  .card h2 {{ font-size:15px; font-weight:600; margin:4px 0 8px; }}
+  .meta {{ font-size:12.5px; color:var(--sub); margin:0 0 12px; clear:both; }}
+  .step {{ font-size:13px; font-weight:600; margin:14px 0 6px; }}
+  .cap {{ white-space:pre-wrap; word-break:break-word; font-size:14px;
+    background:var(--bg); border:1px solid var(--line); border-radius:10px;
+    padding:12px; margin:0 0 10px; font-family:inherit; }}
+  button.copy, a.open {{ display:block; width:100%; text-align:center; text-decoration:none;
+    padding:14px; border-radius:10px; font-size:15px; font-weight:700; border:none;
+    cursor:pointer; margin:0 0 6px; }}
+  button.copy {{ background:var(--btn); color:var(--bg); }}
+  button.copy.done {{ background:#2e7d32; color:#fff; }}
+  a.open {{ background:transparent; color:var(--accent); border:2px solid var(--accent); }}
+  footer {{ text-align:center; color:var(--sub); font-size:12px; padding:0 16px 30px; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>📲 {now:%Y/%m/%d} 楽天ROOMカタログ</h1>
+  <p>① コピー → ② 商品ページを開く → ③ 共有から「ROOMに投稿」して貼り付け</p>
+  <p>💡 投稿は20〜22時(ROOMのゴールデンタイム)がおすすめ</p>
+</header>
+<div class="note">
+  ⚠️ このページは <b>Safari / Chrome</b> で開いてください。LINEやInstagram等のアプリ内ブラウザから開くと、
+  「商品ページを開く」で楽天アプリが起動せず、ROOM投稿アイコンが出ないことがあります。
+</div>
+<main>
+{''.join(cards)}
+</main>
+<footer>自動生成: {now:%Y-%m-%d %H:%M} JST</footer>
+<script>
+  document.querySelectorAll('button.copy').forEach(function (btn) {{
+    btn.addEventListener('click', function () {{
+      var el = document.getElementById(btn.dataset.target);
+      var text = el ? el.textContent : '';
+      var done = function () {{
+        var label = btn.textContent;
+        btn.textContent = '✓ コピーしました';
+        btn.classList.add('done');
+        setTimeout(function () {{ btn.textContent = label; btn.classList.remove('done'); }}, 1600);
+      }};
+      // クリックのユーザー操作内で同期的に実行(iOS Safariでジェスチャが切れないように)
+      try {{
+        if (navigator.clipboard && navigator.clipboard.writeText) {{
+          navigator.clipboard.writeText(text).then(done, function () {{ fallback(text, done); }});
+        }} else {{ fallback(text, done); }}
+      }} catch (e) {{ fallback(text, done); }}
+    }});
+  }});
+  function fallback(text, done) {{
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.setAttribute('readonly', '');
+    ta.style.position = 'absolute'; ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    var range = document.createRange(); range.selectNodeContents(ta);
+    var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    ta.setSelectionRange(0, text.length);
+    try {{ document.execCommand('copy'); done(); }} catch (e) {{}}
+    document.body.removeChild(ta);
+  }}
+</script>
+</body>
+</html>
+"""
+    os.makedirs(os.path.dirname(HTML_PATH), exist_ok=True)
+    with open(HTML_PATH, "w", encoding="utf-8") as f:
+        f.write(html)
 
 
 def notify_discord(count):
@@ -596,9 +734,10 @@ def main():
         entries.append((score, data, caption))
 
     build_catalog(entries)
+    build_html(entries)
     save_history(history + [d["itemCode"] for _, d, _ in entries])
     notify_discord(len(entries))
-    print(f"完了: {CATALOG_PATH} に{len(entries)}商品を出力しました。")
+    print(f"完了: {CATALOG_PATH} と {HTML_PATH} に{len(entries)}商品を出力しました。")
 
 
 if __name__ == "__main__":
