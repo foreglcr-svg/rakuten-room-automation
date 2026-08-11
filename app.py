@@ -73,10 +73,10 @@ SEASONAL_KEYWORDS = {
     2: ["チョコレート ギフト おしゃれ", "レザーグローブ メンズ", "お香 白檀"],
     3: ["一輪挿し 花瓶 ガラス", "文庫本カバー レザー", "リネン ストール"],
     4: ["ピクニック ブランケット", "帆布 トートバッグ", "レイバン サングラス"],
-    5: ["アイスコーヒー ドリッパー", "リネンシャツ 無地", "グラス タンブラー"],
-    6: ["ガラス 風鈴 おしゃれ", "アロマ ルームミスト", "かごバッグ おしゃれ"],
-    7: ["冷茶 グラス ガラス", "アロハシャツ レーヨン", "扇子 おしゃれ"],
-    8: ["麦わら帽子 おしゃれ", "アイスコーヒー 道具", "サンダル レザー"],
+    5: ["アイスコーヒー ドリッパー", "リネンシャツ 無地", "ガラス タンブラー おしゃれ"],
+    6: ["ガラス 風鈴 おしゃれ", "アロマ ルームミスト", "アイスコーヒー ドリッパー"],
+    7: ["冷茶 グラス ガラス", "アイスコーヒー 道具", "リネンシャツ 無地"],
+    8: ["アイスコーヒー ドリッパー", "ガラス タンブラー おしゃれ", "サンダル レザー"],
     9: ["ブックカバー レザー", "コーヒー ドリップポット", "リネン ストール"],
     10: ["キャンドル 秋 香り", "レコードプレーヤー アナログ", "ニット帽 おしゃれ"],
     11: ["ウール ブランケット", "お香 白檀", "万年筆 インク"],
@@ -318,15 +318,17 @@ def select_items(candidates, config, history):
     selected = []
     used_shops, used_keywords, used_categories, group_counts = set(), {}, {}, {}
 
-    def can_take(d, ignore_group=False):
+    def can_take(d, relax=()):
+        """relaxに含めた制約だけ緩める。キーワード/カテゴリ上限は常に厳守(重複防止の要)。"""
         shop, kw, cat = _shop_of(d), d.get("_keyword"), category_of(d)
-        if shop in used_shops:
-            return False
+        # ↓ここは絶対に緩めない: 同一キーワード/同一カテゴリの詰め込みを防ぐ
         if used_keywords.get(kw, 0) >= max_per_keyword:
             return False
         if cat != "other" and used_categories.get(cat, 0) >= max_per_category:
             return False
-        if not ignore_group:
+        if "shop" not in relax and shop in used_shops:
+            return False
+        if "group" not in relax:
             grp = cat_to_group.get(cat)
             if grp and group_counts.get(grp, 0) >= max_per_group.get(grp, 99):
                 return False
@@ -357,25 +359,16 @@ def select_items(candidates, config, history):
                 break
             take(weighted_pick(cands))
 
-    # ② 残り枠を重み付きランダムで、店/キーワード/カテゴリ/グループの上限を守って埋める
-    while pool and len(selected) < n:
-        takeable = [e for e in pool if can_take(e[1])]
-        if not takeable:
-            break
-        take(weighted_pick(takeable))
-
-    # ③ それでも埋まらなければ、グループ上限だけ緩めて補充(衣類上限は最後に妥協)
-    while pool and len(selected) < n:
-        takeable = [e for e in pool if can_take(e[1], ignore_group=True)]
-        if not takeable:
-            break
-        take(weighted_pick(takeable))
-
-    # ④ 最後の保険: スコア順に不足分を補充
-    for entry in sorted(pool, key=lambda x: x[0], reverse=True):
-        if len(selected) >= n:
-            break
-        selected.append(entry)
+    # 残り枠を段階的に制約を緩めて埋める。ただしキーワード/カテゴリ上限は常に厳守するので、
+    # 同じ商品カテゴリが3つ以上・同一キーワードから2つ以上並ぶことは決して起きない。
+    # ②全制約を守って → ③衣類グループ上限を緩める → ④店の重複も許容。
+    # それでも足りなければ5個未満で返す(同種を詰め込むより良い)。
+    for relax in ((), ("group",), ("group", "shop")):
+        while pool and len(selected) < n:
+            takeable = [e for e in pool if can_take(e[1], relax)]
+            if not takeable:
+                break
+            take(weighted_pick(takeable))
     return selected
 
 
