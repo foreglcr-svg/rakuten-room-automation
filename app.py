@@ -331,8 +331,19 @@ def select_items(candidates, config, history):
         return []
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    # 質を担保するため上位プールに限定(でも上位N件より広く取って抽選の幅を持たせる)
-    pool = scored[: max(n * 6, 30)]
+    # プールはキーワードごとの上位から作る。全体の上位N件だけだと少数のキーワードが
+    # 独占し、「1キーワード1点」制約で枠が埋まらなくなるため(841件あって3点しか
+    # 出なかった原因)。各キーワードから上位を集めることで全キーワードが候補に残る。
+    per_keyword = max(3, config.get("max_per_keyword", 2) * 3)
+    by_keyword, pool = {}, []
+    for entry in scored:  # scoredはスコア降順なので先頭から詰めれば各キーワードの上位になる
+        kw = entry[1].get("_keyword")
+        if by_keyword.get(kw, 0) >= per_keyword:
+            continue
+        by_keyword[kw] = by_keyword.get(kw, 0) + 1
+        pool.append(entry)
+    # 念のため最低限の広さは確保しつつ、多すぎる場合はスコア上位側に寄せる
+    pool = pool[: max(n * 10, 40)]
 
     rng = _today_rng()
     max_per_keyword = config.get("max_per_keyword", 2)
