@@ -43,8 +43,12 @@ HISTORY_PATH = "posted_items.json"
 CATALOG_PATH = "CATALOG.md"
 HTML_PATH = "docs/index.html"  # GitHub Pages公開用(1タップコピー+アプリ起動)
 
-# 2026年の楽天APIインフラ刷新後の新エンドポイント(旧app.rakuten.co.jpは廃止済み)
-ICHIBA_SEARCH_URL = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20220601"
+# 2026年の楽天APIインフラ刷新後の新エンドポイント(旧app.rakuten.co.jpは廃止済み)。
+# APIバージョンは廃止されることがある(旧版は "API Configuration not found" を返す)ため、
+# 新しい版から順に試し、成功した版を以降のリクエストで使い回す。
+ICHIBA_API_BASE = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search"
+ICHIBA_API_VERSIONS = ["20260401", "20220601", "20170706"]
+_working_version = None
 
 
 def load_config():
@@ -171,7 +175,30 @@ def _api_headers():
     }
 
 
+def _request_search(version, params):
+    """指定APIバージョンで1回リクエストし、(items, エラー詳細) を返す。"""
+    url = f"{ICHIBA_API_BASE}/{version}"
+    try:
+        res = requests.get(url, params=params, headers=_api_headers(), timeout=30)
+        if res.status_code in (400, 401, 403, 404):
+            try:
+                body = res.json()
+                detail = body.get("error_description") or body.get("error") or str(body)[:200]
+            except ValueError:
+                detail = res.text[:200]
+            return None, f"{res.status_code} {detail}"
+        res.raise_for_status()
+        return res.json().get("Items", []), None
+    except requests.RequestException as e:
+        return None, str(e)
+    finally:
+        time.sleep(1)  # 楽天APIのレートリミット(1req/秒)を厳守
+
+
 def search_items(keyword, sort, page=1, use_affiliate=True):
+    """商品検索。APIバージョンが廃止されていても新旧を順に試して自動復旧する。"""
+    global _working_version
+
     params = {
         "applicationId": RAKUTEN_APP_ID,
         "accessKey": RAKUTEN_ACCESS_KEY,
@@ -183,28 +210,27 @@ def search_items(keyword, sort, page=1, use_affiliate=True):
     }
     if RAKUTEN_AFFILIATE_ID and use_affiliate:
         params["affiliateId"] = RAKUTEN_AFFILIATE_ID
-    try:
-        res = requests.get(ICHIBA_SEARCH_URL, params=params, headers=_api_headers(), timeout=30)
-        if res.status_code in (400, 401, 403):
-            try:
-                body = res.json()
-                detail = body.get("error_description") or body.get("error") or str(body)[:200]
-            except ValueError:
-                detail = res.text[:200]
-            if res.status_code == 400 and use_affiliate and RAKUTEN_AFFILIATE_ID:
-                # affiliateIdの形式不正でも全体が止まらないよう、IDなしで再試行
-                print(f"  [warn] 楽天API 400 ({detail}) — affiliateIdを外して再試行します")
-                time.sleep(1)
-                return search_items(keyword, sort, page=page, use_affiliate=False)
-            print(f"  [warn] 楽天API {res.status_code} keyword={keyword!r}: {detail}")
-            return []
-        res.raise_for_status()
-        return res.json().get("Items", [])
-    except requests.RequestException as e:
-        print(f"  [warn] 楽天API取得失敗 keyword={keyword!r} sort={sort}: {e}")
-        return []
-    finally:
-        time.sleep(1)  # 楽天APIのレートリミット(1req/秒)を厳守
+
+    # 一度成功した版が分かっていればそれだけを使う。未確定なら新しい版から順に試す。
+    versions = [_working_version] if _working_version else ICHIBA_API_VERSIONS
+    last_detail = ""
+    for version in versions:
+        items, detail = _request_search(version, params)
+        if items is not None:
+            if _working_version != version:
+                print(f"  [info] 楽天APIバージョン {version} を使用します")
+                _working_version = version
+            return items
+        last_detail = detail
+        # affiliateIdが原因の400なら、IDなしで一度だけ再試行
+        if "400" in (detail or "") and use_affiliate and RAKUTEN_AFFILIATE_ID:
+            print(f"  [warn] 楽天API 400 ({detail}) — affiliateIdを外して再試行します")
+            return search_items(keyword, sort, page=page, use_affiliate=False)
+
+    # 全版で失敗。次回は再びバージョン探索できるよう記憶を捨てる。
+    _working_version = None
+    print(f"  [warn] 楽天API取得失敗 keyword={keyword!r} sort={sort}: {last_detail}")
+    return []
 
 
 def _today_rng():
